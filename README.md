@@ -159,7 +159,7 @@ Per-signal scores for all 12 claims, AI usage per provider, and which optional s
 | <img src="docs/logos/paypal.svg" height="28" alt="PayPal"/> | **PayPal** | The whole money loop: **Orders v2** + JS SDK donate button into one pool; **Webhooks** (signature-verified, de-duplicated) confirm captures and payouts; **Payouts API** pays verified people directly, with an idempotent `sender_batch_id` per claim and attempt. | `lib/paypal/*`, `app/stream`, `app/api/webhooks/paypal` |
 | <img src="docs/logos/solana.svg" height="28" alt="Solana"/> | **Solana devnet + test PYUSD** | The public trail: one transaction with a Memo per donation, decision and payout (Token-2022 test-PYUSD transfer when the wallet holds it, memo-only otherwise), with retries that never duplicate. | `lib/trail/*` |
 | <img src="docs/logos/elasticsearch.svg" height="28" alt="Elastic"/> | **Elastic** | A photo index with **CLIP vectors** (kNN search finds reused and edited photos, 7 crops per photo) and a claims index with **geo queries** for community vouching. | `lib/search/*` |
-| <img src="docs/logos/render.svg" height="28" alt="Render"/> | **Render** | **Blueprint** (`render.yaml`) for a single web service with a memory-lean photo pipeline, plus **Render Workflows** tasks (five parallel checks, payout, release) with an inline fallback. | `render.yaml`, `workflows/render.ts` |
+| <img src="docs/logos/render.svg" height="28" alt="Render"/> | **Render** | **Blueprint** (`render.yaml`) for a single web service with a memory-lean photo pipeline, plus **Render Workflows** tasks (five parallel checks, payout, release) or inline in the web process. | `render.yaml`, `workflows/render.ts` |
 | <img src="docs/logos/kernel.ico" height="28" alt="Kernel"/> | **Kernel** | A cloud browser opens the official NWS alert page, which has no API, to corroborate the location. A replay link is saved for the demo. | `lib/disasters/kernel.ts` |
 | <img src="docs/logos/zapier.svg" height="28" alt="Zapier"/> | **Zapier** | Two Catch Hooks: a **reviewer alert** when a claim lands in the 50–74 band, and **ops alerts** (pool low, payout failed, AI down). | `lib/alerts/*` |
 | <img src="docs/logos/postman.svg" height="28" alt="Postman"/> | **Postman** | A collection for every internal and PayPal call, run in CI-style with **Newman**: 22 requests, 40 assertions. | `postman/`, `npm run test:api` |
@@ -177,10 +177,10 @@ Per-signal scores for all 12 claims, AI usage per provider, and which optional s
 | **Google Gemini Flash-Lite** (`gemini-3.5-flash-lite`) | `lib/ai` | One vision + text call per claim: does the photo show damage matching the disaster, does it look AI-generated, does the story fit. Returns red flags and an explanation for reviewers. JSON checked with zod. **It never decides or moves money.** |
 | **Groq** vision (`qwen/qwen3.8-27b`) | `lib/ai` | Second provider on the same request and contract, so a claim is never decided without an assessment. |
 | **Groq Whisper** (`whisper-large-v3-turbo`) | `lib/speech` | Voice note → text and language. The transcript stays private. |
-| **CLIP** (`Xenova/clip-vit-base-patch32`, ONNX on CPU, <img src="docs/logos/huggingface.svg" height="14" alt="Hugging Face"/> transformers.js) | `lib/vision` | Image embeddings for near-duplicate photos, 7 crops per photo. Runs locally: no API, no quota. |
+| **CLIP** (`Xenova/clip-vit-base-patch32`, ONNX on CPU, <img src="docs/logos/huggingface.svg" height="14" alt="Hugging Face"/> transformers.js) | `lib/vision` | Image embeddings for near-duplicate photos, 7 crops per photo. Runs locally on the CPU. |
 | **Claude Code** (Anthropic) | the repo | Coding assistant for the whole project (see above). |
 
-**One AI call per claim, tracked per provider.** Calls are counted in Postgres, so usage is visible on /admin and each provider is capped. If one provider is unavailable or at its cap, the other answers; if neither can, the claim goes to a human. A failure of the AI **never** auto-rejects and **never** auto-pays.
+**One AI call per claim.** Gemini makes the assessment; Groq answers the same request when needed, and a claim is never decided without one. A failure of the AI **never** auto-rejects and **never** auto-pays.
 
 ---
 
@@ -302,7 +302,7 @@ Then open **http://localhost:3000/dashboard** (where the money went), a receipt 
 
 | Missing key | Effect |
 | --- | --- |
-| Groq | No AI fallback (a Gemini failure sends the claim to review); voice notes aren't transcribed. |
+| Groq | Voice notes aren't transcribed and Groq vision is off; Gemini still assesses claims. |
 | Kernel | Location uses the feeds only. |
 | Zapier | No alerts. Use the /review queue. |
 | Solana | No on-chain records. Payouts are unaffected. |
@@ -343,7 +343,7 @@ The tunnel URL changes every time, so register the webhook again each time. With
 
 - **Local first:** Postgres and Elasticsearch run in Docker, CLIP runs on your CPU, and a Cloudflare quick tunnel exposes the app for PayPal webhooks.
 - **Efficient AI use:**
-  - **Usage limits:** per-provider daily caps (`AI_DAILY_CALL_BUDGET_GEMINI`, `AI_DAILY_CALL_BUDGET_GROQ`) are counted in Postgres, so usage is predictable. At a cap the other provider answers, or the claim goes to review with the reason.
+  - **Usage tracking:** calls are counted per provider in Postgres and shown on /admin.
   - **Demo cache:** the scripted demo reuses validated results for its fixture claims only (`AI_DEMO_CACHE`, on in development), so repeating it costs no AI calls. Real claims always call the AI.
 - **Graceful degradation:** only PayPal sandbox, Gemini and Postgres are required.
 - **No paid hosting needed** to try it: judges run it locally with the commands above.
