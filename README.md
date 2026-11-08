@@ -144,8 +144,8 @@ Each step links to its Solana transaction.
 Every signal with its evidence, the AI's explanation and red flags. Approve or reject needs a written reason, and the decision goes on the public trail.
 ![Reviewer queue](docs/screenshots/04-reviewer.png)
 
-### 5. The status page: scores, what caught each fake, AI budget, services
-Per-signal scores for all 12 claims, the AI daily budget, and which optional services are on.
+### 5. The status page: scores, what caught each fake, AI usage, services
+Per-signal scores for all 12 claims, AI usage per provider, and which optional services are on.
 ![Status page](docs/screenshots/05-admin.png)
 
 <sub>Regenerate with `npm run demo` then `npm run screenshots` (uses your installed Chrome or Edge).</sub>
@@ -159,7 +159,7 @@ Per-signal scores for all 12 claims, the AI daily budget, and which optional ser
 | <img src="docs/logos/paypal.svg" height="28" alt="PayPal"/> | **PayPal** | The whole money loop: **Orders v2** + JS SDK donate button into one pool; **Webhooks** (signature-verified, de-duplicated) confirm captures and payouts; **Payouts API** pays verified people directly, with an idempotent `sender_batch_id` per claim and attempt. | `lib/paypal/*`, `app/stream`, `app/api/webhooks/paypal` |
 | <img src="docs/logos/solana.svg" height="28" alt="Solana"/> | **Solana devnet + test PYUSD** | The public trail: one transaction with a Memo per donation, decision and payout (Token-2022 test-PYUSD transfer when the wallet holds it, memo-only otherwise), with retries that never duplicate. | `lib/trail/*` |
 | <img src="docs/logos/elasticsearch.svg" height="28" alt="Elastic"/> | **Elastic** | A photo index with **CLIP vectors** (kNN search finds reused and edited photos, 7 crops per photo) and a claims index with **geo queries** for community vouching. | `lib/search/*` |
-| <img src="docs/logos/render.svg" height="28" alt="Render"/> | **Render** | **Blueprint** (`render.yaml`) for a free web service sized to 512 MB (measured 416 MB), plus **Render Workflows** tasks (five parallel checks, payout, release) with an inline fallback. | `render.yaml`, `workflows/render.ts` |
+| <img src="docs/logos/render.svg" height="28" alt="Render"/> | **Render** | **Blueprint** (`render.yaml`) for a single web service with a memory-lean photo pipeline, plus **Render Workflows** tasks (five parallel checks, payout, release) with an inline fallback. | `render.yaml`, `workflows/render.ts` |
 | <img src="docs/logos/kernel.ico" height="28" alt="Kernel"/> | **Kernel** | A cloud browser opens the official NWS alert page, which has no API, to corroborate the location. A replay link is saved for the demo. | `lib/disasters/kernel.ts` |
 | <img src="docs/logos/zapier.svg" height="28" alt="Zapier"/> | **Zapier** | Two Catch Hooks: a **reviewer alert** when a claim lands in the 50–74 band, and **ops alerts** (pool low, payout failed, AI down). | `lib/alerts/*` |
 | <img src="docs/logos/postman.svg" height="28" alt="Postman"/> | **Postman** | A collection for every internal and PayPal call, run in CI-style with **Newman**: 22 requests, 40 assertions. | `postman/`, `npm run test:api` |
@@ -175,12 +175,12 @@ Per-signal scores for all 12 claims, the AI daily budget, and which optional ser
 | Tool | Where | What it does |
 | --- | --- | --- |
 | **Google Gemini Flash-Lite** (`gemini-3.5-flash-lite`) | `lib/ai` | One vision + text call per claim: does the photo show damage matching the disaster, does it look AI-generated, does the story fit. Returns red flags and an explanation for reviewers. JSON checked with zod. **It never decides or moves money.** |
-| **Groq** vision (`qwen/qwen3.8-27b`) | `lib/ai` | Fallback when Gemini is rate-limited, down or over its daily budget. Same request, same contract. |
+| **Groq** vision (`qwen/qwen3.8-27b`) | `lib/ai` | Second provider on the same request and contract, so a claim is never decided without an assessment. |
 | **Groq Whisper** (`whisper-large-v3-turbo`) | `lib/speech` | Voice note → text and language. The transcript stays private. |
 | **CLIP** (`Xenova/clip-vit-base-patch32`, ONNX on CPU, <img src="docs/logos/huggingface.svg" height="14" alt="Hugging Face"/> transformers.js) | `lib/vision` | Image embeddings for near-duplicate photos, 7 crops per photo. Runs locally: no API, no quota. |
 | **Claude Code** (Anthropic) | the repo | Coding assistant for the whole project (see above). |
 
-**AI is one call per claim, and it is budgeted:** daily budgets (Gemini 400, Groq 800) are counted in Postgres. At the limit the app falls back to the other provider, or sends the claim to a human. A failure of the AI **never** auto-rejects and **never** auto-pays.
+**One AI call per claim, tracked per provider.** Calls are counted in Postgres, so usage is visible on /admin and each provider is capped. If one provider is unavailable or at its cap, the other answers; if neither can, the claim goes to a human. A failure of the AI **never** auto-rejects and **never** auto-pays.
 
 ---
 
@@ -205,7 +205,7 @@ flowchart TB
     PG[("Postgres<br/>Prisma")]
     ES[("Elasticsearch<br/>CLIP kNN + geo")]
     PP["PayPal sandbox<br/>Orders · Webhooks · Payouts"]
-    AI["Gemini → Groq<br/>+ Groq Whisper + local CLIP"]
+    AI["Gemini + Groq<br/>+ Groq Whisper + local CLIP"]
     FD["GDACS · USGS · Kernel"]
     ZP["Zapier"]
     SOL[("Solana devnet<br/>Memo trail")]
@@ -245,7 +245,7 @@ Full design, data model, scoring rules and sequence diagrams: **[architecture.md
 | `app/` | Next.js App Router pages: `stream`, `dashboard`, `receipt/[id]`, `review`, `admin`, and every API route |
 | `lib/paypal/` | OAuth token, Orders v2, Payouts, webhook signature verification |
 | `lib/scoring/` | The five weights, thresholds, hard rules and packet sizing. Pure functions, fully unit-tested |
-| `lib/ai/` | The only LLM entry point: Gemini → Groq fallback, zod contract, daily budget, demo cache |
+| `lib/ai/` | The only LLM entry point: Gemini and Groq behind one zod contract, usage tracking, demo cache |
 | `lib/vision/` | EXIF, SHA-256, dHash, CLIP embeddings (multi-crop) |
 | `lib/search/` | Elasticsearch client: photo kNN and claims geo queries |
 | `lib/speech/` | Whisper wrapper (Groq or local) |
@@ -268,32 +268,32 @@ Full design, data model, scoring rules and sequence diagrams: **[architecture.md
 
 ## Run in 10 minutes
 
-**You need:** Node 20+ (tested on 24), **Docker Desktop** (free), a **PayPal developer account** (free; sandbox) and a **Gemini API key** (free, [aistudio.google.com](https://aistudio.google.com)). Nothing else is required.
+**You need:** Node 20+ (tested on 24), **Docker Desktop**, a **PayPal developer account** (sandbox) and a **Gemini API key** ([aistudio.google.com](https://aistudio.google.com)). Nothing else is required.
 
 ```bash
 git clone https://github.com/Adish7Pandya/relief-stream.git && cd relief-stream
 npm run setup                 # 1st run: installs, creates .env, lists the keys to add, and stops
 # put your PayPal sandbox + Gemini keys in .env (table below), then:
 npm run setup                 # 2nd run: starts local Postgres + Elasticsearch in Docker, migrates, creates
-                              # the indices, downloads the CLIP model (~90 MB) and seeds
+                              # the indices, downloads the CLIP model and seeds
 npm run check:env -- --core   # checks only what you need: PayPal sandbox, Gemini, Postgres
 npm run dev:local             # http://localhost:3000
 npm run demo                  # in a second terminal: the scripted demo (≈ 4 min), prints receipt links
 ```
 
-Then open **http://localhost:3000/dashboard** (where the money went), a receipt link printed by the demo, **/review** (the reviewer queue; it needs `REVIEWER_ACCESS_TOKEN`) and **/admin** (status, AI budget, services).
+Then open **http://localhost:3000/dashboard** (where the money went), a receipt link printed by the demo, **/review** (the reviewer queue; it needs `REVIEWER_ACCESS_TOKEN`) and **/admin** (status, AI usage, services).
 
 ### Keys
 | Needed? | Keys | Where |
 | --- | --- | --- |
 | **Core** | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `NEXT_PUBLIC_PAYPAL_CLIENT_ID` (same value), `PAYPAL_POOL_BUSINESS_EMAIL` | developer.paypal.com → Apps & Credentials → **Sandbox** (setup below) |
 | **Core** | `SIM_DONOR_EMAILS` (3), `SIM_CLAIMANT_EMAILS` (6) | developer.paypal.com → Testing Tools → Sandbox Accounts (US Personal) |
-| **Core** | `GEMINI_API_KEY` | aistudio.google.com → Get API key (free) |
+| **Core** | `GEMINI_API_KEY` | aistudio.google.com → Get API key |
 | Auto | `CLAIM_ID_SALT`, `REVIEWER_ACCESS_TOKEN` | generated by `npm run setup` if empty. To open /review, copy `REVIEWER_ACCESS_TOKEN` from your `.env` |
-| Optional | `GROQ_API_KEY` | console.groq.com (free): AI fallback + voice notes |
-| Optional | `KERNEL_API_KEY` | dashboard.onkernel.com (free Developer plan): official alert-page check |
-| Optional | `ZAPIER_REVIEW_WEBHOOK_URL`, `ZAPIER_ALERT_WEBHOOK_URL` | two Zapier Catch Hooks (free plan) |
-| Optional | `SOLANA_TRAIL_WALLET_SECRET_KEY` (+ RPC, mint, explorer defaults) | any devnet wallet; fund it at faucet.solana.com (free) |
+| Optional | `GROQ_API_KEY` | console.groq.com: second AI provider + voice notes |
+| Optional | `KERNEL_API_KEY` | dashboard.onkernel.com: official alert-page check |
+| Optional | `ZAPIER_REVIEW_WEBHOOK_URL`, `ZAPIER_ALERT_WEBHOOK_URL` | two Zapier Catch Hooks |
+| Optional | `SOLANA_TRAIL_WALLET_SECRET_KEY` (+ RPC, mint, explorer defaults) | any devnet wallet; fund it at faucet.solana.com |
 | Optional | `PAYPAL_WEBHOOK_ID` | after `npm run tunnel` (below) |
 
 `DATABASE_URL` and `ELASTIC_URL` already point to the local containers.
@@ -314,8 +314,8 @@ Then open **http://localhost:3000/dashboard** (where the money went), a receipt 
 2. **Testing Tools → Sandbox Accounts**: create US personal accounts, 3 donors (`SIM_DONOR_EMAILS`) and 6 claimants (`SIM_CLAIMANT_EMAILS`), comma-separated.
 3. For the scripted donations, enable **Advanced Credit and Debit Card Payments** on the sandbox app. The simulator pays with a PayPal sandbox test card.
 
-### PayPal webhooks and the PayPal button, through a free tunnel
-`npm run tunnel` opens a **Cloudflare quick tunnel** (free, no account) to your local app and prints the steps:
+### PayPal webhooks and the PayPal button, through a tunnel
+`npm run tunnel` opens a **Cloudflare quick tunnel** (no account needed) to your local app and prints the steps:
 - add `<tunnel-url>/api/webhooks/paypal` as a sandbox webhook (capture completed, payout item succeeded / failed / unclaimed). **The path must be exactly `/api/webhooks/paypal`**;
 - copy its id into `PAYPAL_WEBHOOK_ID`, then restart `npm run dev:local`.
 
@@ -326,36 +326,35 @@ The tunnel URL changes every time, so register the webhook again each time. With
 | --- | --- |
 | `npm run setup` | One-time setup (Docker stack, migrations, indices, CLIP model, seed) |
 | `npm run dev:local` | Local stack + Next.js on :3000 |
-| `npm run demo -- --runs 3` | Scripted demo, run N times. Each run: donations → 12 claims → second donation wave → payouts → public trail → checks. Prints signals, decisions, which check caught each fake, PayPal ids, Solana links, receipt links, and AI calls vs budget. **It resets demo data at the start of each run.** |
+| `npm run demo -- --runs 3` | Scripted demo, run N times. Each run: donations → 12 claims → second donation wave → payouts → public trail → checks. Prints signals, decisions, which check caught each fake, PayPal ids, Solana links, receipt links, and AI calls used. **It resets demo data at the start of each run.** |
 | `npm run check:env` / `-- --core` | Every key SET/MISSING/SKIP per phase, plus cheap live checks (values are never printed) |
 | `npm test` · `npm run typecheck` | 127 unit tests (vitest) · `tsc --noEmit` |
 | `npm run test:e2e` | Reviewer flow in a real browser (Playwright; uses your Chrome or Edge) |
 | `npm run test:api` | Postman collection via Newman against the local app |
 | `npm run check:robustness` | Live race + recovery proofs |
 | `npm run screenshots` | Regenerates the README images in `docs/screenshots` |
-| `npm run tunnel` | Free public HTTPS URL for PayPal webhooks |
+| `npm run tunnel` | Public HTTPS URL for PayPal webhooks |
 | `npm run clip:tune` · `npm run disasters:live` · `npm run alerts:test -- review\|ops` | Photo-similarity matrix · real GDACS/USGS lookup · one test alert |
 | `npm run sim:reset -- --yes` · `npm run stack:down` | Wipe demo data · stop the containers |
 
 ---
 
-## Zero-cost design
+## Runs on your machine
 
-- **Local first:** Postgres and Elasticsearch run in Docker, CLIP runs on your CPU, and the tunnel is a free Cloudflare quick tunnel.
-- **Free AI tiers only:**
-  - **Daily budget:** the `AI_DAILY_CALL_BUDGET_GEMINI` (400) and `_GROQ` (800) guards are counted in Postgres. At the budget the app falls back to the other provider, or sends the claim to review with the reason.
+- **Local first:** Postgres and Elasticsearch run in Docker, CLIP runs on your CPU, and a Cloudflare quick tunnel exposes the app for PayPal webhooks.
+- **Efficient AI use:**
+  - **Usage limits:** per-provider daily caps (`AI_DAILY_CALL_BUDGET_GEMINI`, `AI_DAILY_CALL_BUDGET_GROQ`) are counted in Postgres, so usage is predictable. At a cap the other provider answers, or the claim goes to review with the reason.
   - **Demo cache:** the scripted demo reuses validated results for its fixture claims only (`AI_DEMO_CACHE`, on in development), so repeating it costs no AI calls. Real claims always call the AI.
 - **Graceful degradation:** only PayPal sandbox, Gemini and Postgres are required.
 - **No paid hosting needed** to try it: judges run it locally with the commands above.
 
 ## Deployment (optional)
-The submission runs locally (above). `render.yaml` is a ready Blueprint for **one free Render web service**, if you want a hosted copy:
-- **Memory:** Render's free instance has **512 MB**. We measured the production server (`next build && next start`) at **416 MB peak** after four claims, with CLIP loaded lazily as q4 weights, a lean ONNX session and `NODE_OPTIONS=--max-old-space-size=192` (all set in `render.yaml`; q8 peaked at 538 MB). All the photo fakes are still caught at q4.
-- **Database:** Render's free Postgres is deleted after 30 days, so use **Neon's free plan** (permanent, no card): put its connection string in `DATABASE_URL`, then run `npx prisma migrate deploy` and `npx tsx scripts/seed.ts` once.
-- **Elasticsearch:** there's no free hosted option in this plan, so leave `ELASTIC_URL` empty. The perceptual hash still catches resized and re-compressed copies, but the **cropped and heavy-edit fakes are only caught with Elasticsearch** (local run).
-- **Speed:** the first claim after a cold start loads CLIP (17 s locally; slower on the free plan's shared CPU).
+The submission runs locally (above). `render.yaml` is a ready Blueprint for **one Render web service**, if you want a hosted copy:
+- **Memory:** the photo model loads on the first claim, uses 4-bit quantized weights, a lean ONNX session and a capped Node heap (set in `render.yaml`), so the app fits a small instance. All the photo fakes are still caught with the quantized model.
+- **Database:** any managed Postgres works (for example Neon): put its connection string in `DATABASE_URL`, then run `npx prisma migrate deploy` and `npx tsx scripts/seed.ts` once.
+- **Elasticsearch:** the local Elasticsearch runs with the stack. For a hosted copy, set `ELASTIC_URL` to a managed cluster. Without it, the perceptual hash still catches resized and re-compressed copies, but the **cropped and heavy-edit fakes are only caught with Elasticsearch**.
+- **Speed:** the first claim after a cold start loads the model (about 17 s on a laptop CPU).
 - **Webhooks:** register `<your-render-url>/api/webhooks/paypal` and set `PAYPAL_WEBHOOK_ID`.
-
 ---
 
 ## What we tested
