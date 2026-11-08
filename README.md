@@ -271,7 +271,7 @@ Full design, data model, scoring rules and sequence diagrams: **[architecture.md
 **You need:** Node 20+ (tested on 24), **Docker Desktop** (free), a **PayPal developer account** (free; sandbox) and a **Gemini API key** (free, [aistudio.google.com](https://aistudio.google.com)). Nothing else is required.
 
 ```bash
-git clone https://github.com/Aryan27-max/Pay-Pal-Ai-Hackathon.git && cd Pay-Pal-Ai-Hackathon
+git clone https://github.com/Adish7Pandya/relief-stream.git && cd relief-stream
 npm run setup                 # 1st run: installs, creates .env, lists the keys to add, and stops
 # put your PayPal sandbox + Gemini keys in .env (table below), then:
 npm run setup                 # 2nd run: starts local Postgres + Elasticsearch in Docker, migrates, creates
